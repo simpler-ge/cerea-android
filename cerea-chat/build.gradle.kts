@@ -20,6 +20,14 @@ android {
     kotlinOptions { jvmTarget = "17" }
 
     buildFeatures { buildConfig = false }
+
+    // Required for JitPack to discover the AAR via components["release"] and
+    // for consumers to receive a sources jar.
+    publishing {
+        singleVariant("release") {
+            withSourcesJar()
+        }
+    }
 }
 
 dependencies {
@@ -33,7 +41,7 @@ afterEvaluate {
                 from(components["release"])
                 groupId = "com.github.simpler-ge"
                 artifactId = "cerea-android"
-                version = "0.1.0"
+                version = "0.1.1"
             }
         }
     }
