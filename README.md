@@ -27,6 +27,14 @@ dependencies {
 
 `minSdk` ≥ 24 is required.
 
+> **WebView requirement.** The chat widget is loaded into a `WebView` and
+> uses dynamic `import()`, which needs **Android System WebView 63 or
+> newer**. `minSdk` alone is not sufficient: a stock Android 8.0 device
+> ships WebView 58 and the widget will fail to start (`SyntaxError:
+> Unexpected token import`) until the user updates *Android System
+> WebView* from the Play Store. Devices with Play Services generally
+> receive this update automatically; devices without it do not.
+
 ## Use
 
 ```kotlin
@@ -34,7 +42,7 @@ import com.cerea.chat.CereaChatFragment
 
 val chat = CereaChatFragment.newInstance(
     token = "<widget-token-from-dashboard>",
-    userToken = userTokenFromYourBackend,        // optional, enables history
+    userToken = userTokenFromYourBackend,        // identity + history (see below)
     attributes = mapOf("plan" to "pro"),
 )
 supportFragmentManager
@@ -47,13 +55,36 @@ supportFragmentManager
 chat.updateContext(mapOf("current_screen" to "billing"))
 ```
 
-### Identity & history (optional)
+### Identity & history
 
 If `userToken` is provided — an HS256 JWT signed by your backend with
 the agent's HMAC secret (claims: `aud: "cerea-identity"`, `user_id`,
 `exp` ≤24h) — the visitor's conversations persist across devices and
-reinstalls, and the in-widget history drawer activates. Without it,
-each install is anonymous and scoped to that device.
+reinstalls, and the in-widget history drawer activates.
+
+**A visitor identity is required to start a conversation.** The session
+endpoint rejects anonymous visitors with `identity_required`. Supply one
+of:
+
+1. **`userToken`** — recommended for apps where the user is signed in.
+2. **A pre-chat form** — enable it on the agent in the Cerea dashboard
+   (Theme → Pre-chat form) so the widget collects a name plus a phone
+   number or e-mail address before the first message.
+
+Without either, the widget renders and shows the greeting but cannot
+send messages.
+
+The JWT must be signed with the agent's **HMAC secret exactly as shown in
+the dashboard** (the hex string is used as UTF-8 text, not decoded to
+bytes) and must include an `iat` claim — tokens without `iat` are
+rejected with `invalid_user_token`. Use `user_id`; `sub` alone is not
+accepted.
+
+```
+header  { "alg": "HS256", "typ": "JWT" }
+payload { "aud": "cerea-identity", "user_id": "<your id>",
+          "iat": <now>, "exp": <now + ≤86400> }
+```
 
 ### Self-hosted widget
 
@@ -62,6 +93,18 @@ CereaChatFragment.newInstance(
     token = "...",
     host = "https://chat.example.com",   // your hosted widget URL
 )
+```
+
+## Host activity configuration
+
+The chat composer sits at the bottom of the fragment. Set the hosting
+activity's soft-input mode so the keyboard resizes the view instead of
+covering the composer:
+
+```xml
+<activity
+    android:name=".ChatActivity"
+    android:windowSoftInputMode="adjustResize" />
 ```
 
 ## Required permissions

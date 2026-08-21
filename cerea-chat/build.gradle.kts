@@ -41,7 +41,7 @@ afterEvaluate {
                 from(components["release"])
                 groupId = "com.github.simpler-ge"
                 artifactId = "cerea-android"
-                version = "0.1.1"
+                version = "0.1.2"
             }
         }
     }

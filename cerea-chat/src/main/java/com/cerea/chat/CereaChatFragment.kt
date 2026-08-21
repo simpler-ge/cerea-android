@@ -1,13 +1,16 @@
 package com.cerea.chat
 
 import android.annotation.SuppressLint
+import android.content.Context
 import android.content.Intent
 import android.net.Uri
+import android.os.Build
 import android.os.Bundle
 import android.util.Log
 import android.view.LayoutInflater
 import android.view.View
 import android.view.ViewGroup
+import android.widget.TextView
 import android.webkit.ConsoleMessage
 import android.webkit.PermissionRequest
 import android.webkit.WebChromeClient
@@ -62,6 +65,25 @@ class CereaChatFragment : Fragment() {
         container: ViewGroup?,
         savedInstanceState: Bundle?
     ): View {
+        // The hosted widget needs a reasonably modern WebView (it uses
+        // dynamic import(), optional chaining and crypto.randomUUID()).
+        // A stock Android 8 device ships WebView 58 and would render a
+        // broken, unstyled page — fail with a clear, actionable message
+        // instead. WebView updates via the Play Store independently of the
+        // OS, so this is about the WebView version, not the Android version.
+        val webViewMajor = webViewMajorVersion(requireContext())
+        if (webViewMajor != null && webViewMajor < MIN_WEBVIEW_MAJOR) {
+            Log.w(
+                TAG,
+                "Android System WebView $webViewMajor is too old " +
+                    "(need $MIN_WEBVIEW_MAJOR+); refusing to load the widget."
+            )
+            return TextView(requireContext()).apply {
+                setPadding(48, 48, 48, 48)
+                text = UPDATE_WEBVIEW_MESSAGE
+            }
+        }
+
         val args = requireArguments()
         token = args.getString(ARG_TOKEN) ?: ""
         attributesJson = args.getString(ARG_ATTRIBUTES) ?: "{}"
@@ -130,12 +152,67 @@ class CereaChatFragment : Fragment() {
                         )
                         "Object.assign(window.cereaConfig, $tokenJson);"
                     } else ""
+                    val pkgJson = JSONObject.quote(requireContext().packageName)
                     view.evaluateJavascript(
                         """
                         (function() {
                           window.cereaConfig = $safeAttrs;
                           $userTokenAssign
                           window.cereaSurface = 'android';
+
+                          // WebView does not copy the headers we set on
+                          // loadUrl() onto the page's own fetch/XHR calls, so
+                          // /api/webchat/* would be rejected with 403
+                          // origin_not_allowed. Attach the package header to
+                          // same-origin API requests here instead.
+                          var PKG = $pkgJson;
+                          var HEADER = 'X-Cerea-Package';
+                          function sameOrigin(url) {
+                            try {
+                              return new URL(url, window.location.href).origin
+                                === window.location.origin;
+                            } catch (e) { return false; }
+                          }
+                          var origFetch = window.fetch;
+                          if (origFetch) {
+                            window.fetch = function (input, init) {
+                              try {
+                                var url = (typeof input === 'string')
+                                  ? input
+                                  : (input && input.url) || '';
+                                if (sameOrigin(url)) {
+                                  if (typeof input !== 'string'
+                                      && typeof Request !== 'undefined'
+                                      && input instanceof Request) {
+                                    var rh = new Headers(input.headers);
+                                    rh.set(HEADER, PKG);
+                                    input = new Request(input, { headers: rh });
+                                  } else {
+                                    init = init || {};
+                                    var ih = new Headers(init.headers || {});
+                                    ih.set(HEADER, PKG);
+                                    init.headers = ih;
+                                  }
+                                }
+                              } catch (e) {}
+                              return origFetch.call(this, input, init);
+                            };
+                          }
+                          var origOpen = XMLHttpRequest.prototype.open;
+                          var origSend = XMLHttpRequest.prototype.send;
+                          XMLHttpRequest.prototype.open = function (m, u) {
+                            try { this.__cereaSameOrigin = sameOrigin(u); }
+                            catch (e) {}
+                            return origOpen.apply(this, arguments);
+                          };
+                          XMLHttpRequest.prototype.send = function () {
+                            try {
+                              if (this.__cereaSameOrigin) {
+                                this.setRequestHeader(HEADER, PKG);
+                              }
+                            } catch (e) {}
+                            return origSend.apply(this, arguments);
+                          };
                         })();
                         """.trimIndent(),
                         null
@@ -188,6 +265,26 @@ class CereaChatFragment : Fragment() {
         )
     }
 
+    /**
+     * Major version of the WebView implementation, or null when it cannot
+     * be determined (in which case we optimistically continue).
+     */
+    private fun webViewMajorVersion(context: Context): Int? {
+        val versionName = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+            WebView.getCurrentWebViewPackage()?.versionName
+        } else {
+            try {
+                @Suppress("DEPRECATION")
+                context.packageManager
+                    .getPackageInfo("com.google.android.webview", 0)
+                    .versionName
+            } catch (_: Exception) {
+                null
+            }
+        } ?: return null
+        return versionName.substringBefore('.').toIntOrNull()
+    }
+
     override fun onDestroyView() {
         // Order matters: detach clients, navigate away, then destroy. Without
         // this, the WebView's renderer process can outlive the Fragment and
@@ -205,6 +302,19 @@ class CereaChatFragment : Fragment() {
 
     companion object {
         private const val TAG = "CereaChat"
+
+        /**
+         * Minimum Android System WebView major version. The widget bundle
+         * calls `crypto.randomUUID()` (Chromium 92) in addition to using
+         * dynamic `import()` (63) and optional chaining (80).
+         */
+        const val MIN_WEBVIEW_MAJOR = 92
+
+        /** Shown when the device's WebView is older than [MIN_WEBVIEW_MAJOR]. */
+        var UPDATE_WEBVIEW_MESSAGE: String =
+            "Chat is unavailable because Android System WebView on this " +
+                "device is out of date. Please update \"Android System " +
+                "WebView\" in Google Play and try again."
         private const val DEFAULT_HOST = "https://app.cerea.ai"
         private const val ARG_TOKEN = "cerea_token"
         private const val ARG_ATTRIBUTES = "cerea_attributes"
