@@ -1,6 +1,7 @@
 package com.cerea.chat
 
 import android.annotation.SuppressLint
+import android.content.ActivityNotFoundException
 import android.content.Context
 import android.content.Intent
 import android.net.Uri
@@ -13,10 +14,12 @@ import android.view.ViewGroup
 import android.widget.TextView
 import android.webkit.ConsoleMessage
 import android.webkit.PermissionRequest
+import android.webkit.ValueCallback
 import android.webkit.WebChromeClient
 import android.webkit.WebResourceRequest
 import android.webkit.WebView
 import android.webkit.WebViewClient
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.fragment.app.Fragment
 import org.json.JSONObject
 
@@ -58,6 +61,23 @@ class CereaChatFragment : Fragment() {
     private var userToken: String? = null
     private var host: String = DEFAULT_HOST
     private var hostOrigin: Uri = Uri.parse(DEFAULT_HOST)
+
+    /**
+     * Pending `<input type="file">` callback. WebView blocks the file input
+     * until this is answered exactly once — answering twice throws, never
+     * answering leaves the input permanently dead.
+     */
+    private var filePathCallback: ValueCallback<Array<Uri>>? = null
+
+    private val fileChooserLauncher = registerForActivityResult(
+        ActivityResultContracts.StartActivityForResult()
+    ) { result ->
+        val callback = filePathCallback ?: return@registerForActivityResult
+        filePathCallback = null
+        callback.onReceiveValue(
+            WebChromeClient.FileChooserParams.parseResult(result.resultCode, result.data)
+        )
+    }
 
     @SuppressLint("SetJavaScriptEnabled")
     override fun onCreateView(
@@ -114,6 +134,35 @@ class CereaChatFragment : Fragment() {
                         request.grant(request.resources)
                     } else {
                         request.deny()
+                    }
+                }
+
+                /**
+                 * Open the system file picker for `<input type="file">`.
+                 *
+                 * Android WebView does nothing at all without this override —
+                 * unlike iOS WKWebView, there is no built-in picker — so the
+                 * widget's attachment button is inert until we implement it.
+                 */
+                override fun onShowFileChooser(
+                    webView: WebView?,
+                    filePathCallback: ValueCallback<Array<Uri>>,
+                    fileChooserParams: FileChooserParams
+                ): Boolean {
+                    // A previous request still pending? Cancel it, or WebView
+                    // keeps the old input blocked forever.
+                    this@CereaChatFragment.filePathCallback?.onReceiveValue(null)
+                    this@CereaChatFragment.filePathCallback = filePathCallback
+                    return try {
+                        fileChooserLauncher.launch(fileChooserParams.createIntent())
+                        true
+                    } catch (e: ActivityNotFoundException) {
+                        // No picker on the device. Release the input rather
+                        // than leaving it wedged.
+                        this@CereaChatFragment.filePathCallback = null
+                        filePathCallback.onReceiveValue(null)
+                        Log.w(TAG, "No activity available to pick files", e)
+                        false
                     }
                 }
 
@@ -286,6 +335,11 @@ class CereaChatFragment : Fragment() {
     }
 
     override fun onDestroyView() {
+        // Release any file input still waiting on the picker. WebView expects
+        // exactly one answer per request; dropping it silently would wedge the
+        // input if the same renderer is reused.
+        filePathCallback?.onReceiveValue(null)
+        filePathCallback = null
         // Order matters: detach clients, navigate away, then destroy. Without
         // this, the WebView's renderer process can outlive the Fragment and
         // post messages to a destroyed view (crash on rotation in v0.1.0).

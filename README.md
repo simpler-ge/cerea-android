@@ -119,6 +119,13 @@ covering the composer:
 <uses-permission android:name="android.permission.READ_MEDIA_IMAGES" />
 ```
 
+## Attachments
+
+The fragment implements `WebChromeClient.onShowFileChooser` and opens the
+system picker itself, so the widget's attachment button works with no extra
+integration. (Android WebView has no built-in picker — without that override
+`<input type="file">` is silently inert.)
+
 ## Configure the agent
 
 1. In the Cerea dashboard, go to **Agents → General Chat → Create Agent**.
