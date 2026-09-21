@@ -57,7 +57,7 @@ chat.updateContext(mapOf("current_screen" to "billing"))
 
 ### Closing the chat
 
-The widget's header shows a back arrow. Tapping it does exactly what the
+The widget's header has a close button (✕). Tapping it does exactly what the
 system back does — pops the chat off the back stack, finishes an activity that
 holds only the chat, or runs any back callback you registered — and then calls
 `onClose`:
@@ -73,7 +73,7 @@ chat.onEvent = { event ->
     when (event) {
         CereaChatEvent.READY -> {}   // widget loaded its configuration
         CereaChatEvent.OPEN -> {}    // chat window showing
-        CereaChatEvent.CLOSE -> {}   // user tapped the header back arrow
+        CereaChatEvent.CLOSE -> {}   // user tapped the header close button
     }
 }
 ```
@@ -85,7 +85,7 @@ again on the restored instance.
 
 > If you previously reached into the fragment's `WebView` to listen for these
 > events, remove that code when you update. An interface of your own named
-> `CereaAndroid` replaces the SDK's, and the header back arrow stops working.
+> `CereaAndroid` replaces the SDK's, and the header close button stops working.
 
 ### Identity & history
 
