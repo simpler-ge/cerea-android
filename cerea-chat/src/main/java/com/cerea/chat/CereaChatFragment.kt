@@ -7,12 +7,15 @@ import android.content.Intent
 import android.net.Uri
 import android.os.Build
 import android.os.Bundle
+import android.os.Handler
+import android.os.Looper
 import android.util.Log
 import android.view.LayoutInflater
 import android.view.View
 import android.view.ViewGroup
 import android.widget.TextView
 import android.webkit.ConsoleMessage
+import android.webkit.JavascriptInterface
 import android.webkit.PermissionRequest
 import android.webkit.ValueCallback
 import android.webkit.WebChromeClient
@@ -41,6 +44,9 @@ import org.json.JSONObject
  *
  * // Dynamic context updates
  * chat.updateContext(mapOf("current_screen" to "billing"))
+ *
+ * // Optional: hear what the widget reports
+ * chat.onEvent = { event -> Log.d("Chat", "widget: $event") }
  * ```
  *
  * `userToken` is an HS256 JWT signed by your backend with the agent's HMAC
@@ -61,6 +67,35 @@ class CereaChatFragment : Fragment() {
     private var userToken: String? = null
     private var host: String = DEFAULT_HOST
     private var hostOrigin: Uri = Uri.parse(DEFAULT_HOST)
+    private val mainHandler = Handler(Looper.getMainLooper())
+
+    /**
+     * Whether the current page has reported `open`. Older widget builds report
+     * `close` while starting up, before `open`; acting on that would close the
+     * chat as it appears. Reset on every page load.
+     */
+    private var widgetOpened = false
+
+    /** Set once a close is under way, so a double tap cannot go back twice. */
+    private var isClosing = false
+
+    /**
+     * Called after the user taps the back button in the widget's header and
+     * the fragment has performed a system back — which pops it when it is on
+     * the back stack, or finishes a host activity that holds only the chat.
+     *
+     * Like any fragment callback, this is not kept across configuration
+     * changes; set it again on the restored instance.
+     */
+    var onClose: (() -> Unit)? = null
+
+    /**
+     * Called on the main thread for each event the widget reports: [CereaChatEvent.READY],
+     * [CereaChatEvent.OPEN], and [CereaChatEvent.CLOSE] when the user taps the header's
+     * back button. You do not need to act on CLOSE — the fragment goes back itself
+     * and then calls [onClose].
+     */
+    var onEvent: ((CereaChatEvent) -> Unit)? = null
 
     /**
      * Pending `<input type="file">` callback. WebView blocks the file input
@@ -120,6 +155,10 @@ class CereaChatFragment : Fragment() {
             // reaching into the app's sandbox.
             settings.allowFileAccess = false
             settings.allowContentAccess = false
+
+            // The widget reports ready/open/close to `window.CereaAndroid`.
+            // Added before loadUrl: an interface appears only on the next load.
+            addJavascriptInterface(HostBridge(), HOST_BRIDGE_NAME)
 
             webChromeClient = object : WebChromeClient() {
                 /**
@@ -190,6 +229,9 @@ class CereaChatFragment : Fragment() {
                     favicon: android.graphics.Bitmap?
                 ) {
                     super.onPageStarted(view, url, favicon)
+                    // A new page starts over: its close counts only after its
+                    // own open.
+                    widgetOpened = false
                     if (url == null || url.startsWith("about:")) return
                     val safeAttrs = escapeJsLineSeparators(attributesJson)
                     val safeUserToken = userToken?.takeIf {
@@ -315,6 +357,57 @@ class CereaChatFragment : Fragment() {
     }
 
     /**
+     * Receives the widget's events. WebView calls it on a background thread
+     * and injects it into every frame, so each call hops to the main thread
+     * and is dropped unless the page showing is the configured widget host.
+     */
+    private inner class HostBridge {
+        @JavascriptInterface
+        fun postMessage(json: String) {
+            mainHandler.post { receive(json) }
+        }
+    }
+
+    private fun receive(json: String) {
+        val pageHost = webView?.url?.let(Uri::parse)?.host ?: return
+        if (pageHost != hostOrigin.host) return
+        val message = try {
+            JSONObject(json)
+        } catch (_: Exception) {
+            return
+        }
+        if (message.optString("ns") != HOST_BRIDGE_NAMESPACE) return
+        val event = CereaChatEvent.fromType(message.optString("type")) ?: return
+        when (event) {
+            CereaChatEvent.OPEN -> widgetOpened = true
+            // Start-up state from an older widget, not the user asking out.
+            CereaChatEvent.CLOSE -> if (!widgetOpened) return
+            CereaChatEvent.READY -> Unit
+        }
+        onEvent?.invoke(event)
+        if (event == CereaChatEvent.CLOSE) close()
+    }
+
+    /**
+     * The header shows a back arrow on Android, so it does what the system
+     * back does: pops the chat off the back stack, finishes an activity that
+     * holds only the chat, or runs whatever back callback the host added.
+     */
+    private fun close() {
+        if (isClosing || !isAdded || isStateSaved) return
+        isClosing = true
+        requireActivity().onBackPressedDispatcher.onBackPressed()
+        onClose?.invoke()
+    }
+
+    override fun onResume() {
+        super.onResume()
+        // Back on screen after an earlier close, e.g. the host's back callback
+        // kept the chat up. It must be closable again.
+        isClosing = false
+    }
+
+    /**
      * Major version of the WebView implementation, or null when it cannot
      * be determined (in which case we optimistically continue).
      */
@@ -343,7 +436,9 @@ class CereaChatFragment : Fragment() {
         // Order matters: detach clients, navigate away, then destroy. Without
         // this, the WebView's renderer process can outlive the Fragment and
         // post messages to a destroyed view (crash on rotation in v0.1.0).
+        mainHandler.removeCallbacksAndMessages(null)
         webView?.let { wv ->
+            wv.removeJavascriptInterface(HOST_BRIDGE_NAME)
             wv.webChromeClient = null
             wv.webViewClient = WebViewClient()
             wv.loadUrl("about:blank")
@@ -374,6 +469,10 @@ class CereaChatFragment : Fragment() {
         private const val ARG_ATTRIBUTES = "cerea_attributes"
         private const val ARG_USER_TOKEN = "cerea_user_token"
         private const val ARG_HOST = "cerea_host"
+
+        /** Name the widget posts to: `window.CereaAndroid.postMessage(json)`. */
+        private const val HOST_BRIDGE_NAME = "CereaAndroid"
+        private const val HOST_BRIDGE_NAMESPACE = "cerea.widget.v1"
 
         // base64url segments joined by '.'
         private val USER_TOKEN_PATTERN = Regex("^[A-Za-z0-9_.-]+$")
