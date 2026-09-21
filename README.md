@@ -21,7 +21,7 @@ In your app module's **`build.gradle.kts`**:
 
 ```kotlin
 dependencies {
-    implementation("com.github.simpler-ge:cerea-android:0.1.3")
+    implementation("com.github.simpler-ge:cerea-android:0.1.4")
 }
 ```
 
@@ -55,6 +55,38 @@ supportFragmentManager
 chat.updateContext(mapOf("current_screen" to "billing"))
 ```
 
+### Closing the chat
+
+The widget's header shows a back arrow. Tapping it does exactly what the
+system back does — pops the chat off the back stack, finishes an activity that
+holds only the chat, or runs any back callback you registered — and then calls
+`onClose`:
+
+```kotlin
+chat.onClose = { Log.d("Chat", "chat closed") }   // optional
+```
+
+### Widget events (0.1.4+)
+
+```kotlin
+chat.onEvent = { event ->
+    when (event) {
+        CereaChatEvent.READY -> {}   // widget loaded its configuration
+        CereaChatEvent.OPEN -> {}    // chat window showing
+        CereaChatEvent.CLOSE -> {}   // user tapped the header back arrow
+    }
+}
+```
+
+You do not need to act on `CLOSE`; the fragment goes back itself right after
+reporting it. Events arrive on the main thread. Like any fragment callback,
+`onEvent` and `onClose` are not kept across configuration changes — set them
+again on the restored instance.
+
+> If you previously reached into the fragment's `WebView` to listen for these
+> events, remove that code when you update. An interface of your own named
+> `CereaAndroid` replaces the SDK's, and the header back arrow stops working.
+
 ### Identity & history
 
 If `userToken` is provided — an HS256 JWT signed by your backend with
@@ -62,17 +94,17 @@ the agent's HMAC secret (claims: `aud: "cerea-identity"`, `user_id`,
 `exp` ≤24h) — the visitor's conversations persist across devices and
 reinstalls, and the in-widget history drawer activates.
 
-**A visitor identity is required to start a conversation.** The session
-endpoint rejects anonymous visitors with `identity_required`. Supply one
-of:
+**A visitor identity is required to start a conversation, and on Android
+`userToken` is the only way to supply one.** The session endpoint rejects
+anonymous visitors with `identity_required`.
 
-1. **`userToken`** — recommended for apps where the user is signed in.
-2. **A pre-chat form** — enable it on the agent in the Cerea dashboard
-   (Theme → Pre-chat form) so the widget collects a name plus a phone
-   number or e-mail address before the first message.
+The pre-chat form is **not** an alternative here: the widget only renders
+it on the `webchat` surface, so enabling it on a mobile agent has no
+effect no matter what the dashboard shows.
 
-Without either, the widget renders and shows the greeting but cannot
-send messages.
+Without a `userToken` the widget still renders and shows the greeting —
+so it looks like it is working — but no session exists, sending a message
+does nothing, and attaching a file fails with `401`.
 
 The JWT must be signed with the agent's **HMAC secret exactly as shown in
 the dashboard** (the hex string is used as UTF-8 text, not decoded to
@@ -135,9 +167,11 @@ integration. (Android WebView has no built-in picker — without that override
 
 ## Security notes
 
-The SDK locks down the WebView (no file/content URL access, no
-`addJavascriptInterface`, camera/mic permission gated on the configured
-host) and routes external links to the system browser. JS injection
+The SDK locks down the WebView (no file/content URL access, camera/mic
+permission gated on the configured host) and routes external links to the
+system browser. Its one JavaScript interface, `CereaAndroid`, exposes a
+single `postMessage(String)` and acts only while the page showing is the
+configured widget host. JS injection
 sites are escaped via `JSONObject` plus U+2028 / U+2029 hardening.
 
 ## License
