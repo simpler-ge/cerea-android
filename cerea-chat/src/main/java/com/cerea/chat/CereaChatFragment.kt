@@ -389,8 +389,9 @@ class CereaChatFragment : Fragment() {
     }
 
     /**
-     * Closing from the header does what the system back does on Android: pops the chat off the back stack, finishes an activity that
-     * holds only the chat, or runs whatever back callback the host added.
+     * Closing from the header does what the system back does on Android:
+     * pops the chat off the back stack, finishes an activity that holds only
+     * the chat, or runs whatever back callback the host added.
      */
     private fun close() {
         if (isClosing || !isAdded || isStateSaved) return
