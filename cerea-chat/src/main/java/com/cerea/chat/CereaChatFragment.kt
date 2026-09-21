@@ -80,7 +80,7 @@ class CereaChatFragment : Fragment() {
     private var isClosing = false
 
     /**
-     * Called after the user taps the back button in the widget's header and
+     * Called after the user taps the close button in the widget's header and
      * the fragment has performed a system back — which pops it when it is on
      * the back stack, or finishes a host activity that holds only the chat.
      *
@@ -92,7 +92,7 @@ class CereaChatFragment : Fragment() {
     /**
      * Called on the main thread for each event the widget reports: [CereaChatEvent.READY],
      * [CereaChatEvent.OPEN], and [CereaChatEvent.CLOSE] when the user taps the header's
-     * back button. You do not need to act on CLOSE — the fragment goes back itself
+     * close button. You do not need to act on CLOSE — the fragment goes back itself
      * and then calls [onClose].
      */
     var onEvent: ((CereaChatEvent) -> Unit)? = null
@@ -389,8 +389,7 @@ class CereaChatFragment : Fragment() {
     }
 
     /**
-     * The header shows a back arrow on Android, so it does what the system
-     * back does: pops the chat off the back stack, finishes an activity that
+     * Closing from the header does what the system back does on Android: pops the chat off the back stack, finishes an activity that
      * holds only the chat, or runs whatever back callback the host added.
      */
     private fun close() {

@@ -9,7 +9,7 @@ enum class CereaChatEvent(internal val type: String) {
     OPEN("open"),
 
     /**
-     * The user tapped the back button in the widget's header. The fragment
+     * The user tapped the close button in the widget's header. The fragment
      * performs a system back right after reporting it.
      */
     CLOSE("close");
